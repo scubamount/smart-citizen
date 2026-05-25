@@ -296,3 +296,102 @@ class TestAppendEnhancementsGuard:
         result = gen_module.append_enhancements("Base text.", "HP: 500")
         assert "Base text." in result
         assert "HP: 500" in result
+
+
+# ── enhancements_bomb_rack ────────────────────────────────────────────────
+
+class TestEnhancementsBombRack:
+    """Covers ``enhancements_bomb_rack`` stat extraction."""
+
+    def test_full_bomb_rack(self, gen_module, tmp_path):
+        """Bomb rack with size, grade, slots, and health."""
+        xml = """<EntityClassDefinition>
+          <Components>
+            <SAttachableComponentParams>
+              <AttachDef Size="5" Grade="2"/>
+            </SAttachableComponentParams>
+            <SCItemMissileRackParams>
+              <slotTags>
+                <String value="tag_bomb_S5"/>
+                <String value="tag_bomb_S5"/>
+                <String value="tag_bomb_S5"/>
+              </slotTags>
+            </SCItemMissileRackParams>
+            <SHealthComponentParams Health="3500"/>
+          </Components>
+        </EntityClassDefinition>"""
+        xml_file = tmp_path / "bomb_rack_s5.xml"
+        xml_file.write_text(xml, encoding="utf-8")
+        root = ET.parse(xml_file).getroot()
+        result = gen_module.enhancements_bomb_rack(root)
+        assert "Size: S5" in result
+        assert "Grade: 2" in result
+        assert "Bomb Slots: 3" in result
+        assert "Component HP:" in result
+
+    def test_no_attachable_params(self, gen_module, tmp_path):
+        """Returns empty when SAttachableComponentParams is missing."""
+        xml = """<EntityClassDefinition>
+          <Components>
+            <SHealthComponentParams Health="1000"/>
+          </Components>
+        </EntityClassDefinition>"""
+        xml_file = tmp_path / "not_a_rack.xml"
+        xml_file.write_text(xml, encoding="utf-8")
+        root = ET.parse(xml_file).getroot()
+        assert gen_module.enhancements_bomb_rack(root) == ""
+
+    def test_no_attach_def(self, gen_module, tmp_path):
+        """Returns empty when AttachDef is missing inside SAttachableComponentParams."""
+        xml = """<EntityClassDefinition>
+          <Components>
+            <SAttachableComponentParams/>
+          </Components>
+        </EntityClassDefinition>"""
+        xml_file = tmp_path / "no_def.xml"
+        xml_file.write_text(xml, encoding="utf-8")
+        root = ET.parse(xml_file).getroot()
+        assert gen_module.enhancements_bomb_rack(root) == ""
+
+
+# ── _humanize_key ─────────────────────────────────────────────────────────
+
+class TestHumanizeKey:
+    """Covers the ``_humanize_key`` helper."""
+
+    def test_underscores_to_spaces(self, gen_module):
+        assert gen_module._humanize_key("item_DescSHLD_A") == "item DescSHLD A"
+
+    def test_strips_whitespace(self, gen_module):
+        assert gen_module._humanize_key("_leading_trailing_") == "leading trailing"
+
+    def test_empty_string(self, gen_module):
+        assert gen_module._humanize_key("") == ""
+
+
+# ── Parser: user override on discovered item ──────────────────────────────
+
+class TestDiscoveredItemUserOverride:
+    """Covers that editing a discovered item transitions its status to Modified."""
+
+    def test_user_override_on_discovered_is_modified(self):
+        """A key only in enhancements (discovered) that the user then edits
+        should show as 'Modified', not 'New'."""
+        from src.parser.ini_parser import load_source_files
+
+        base = {"item_DescSHLD_A": "Shield A"}
+        enhancement = {
+            "item_DescSHLD_A": "Shield A\\n\\n--- STATS ---\\nHP: 1000",
+            "item_DescSHLD_B": "Discovered Shield\\n\\n--- STATS ---\\nHP: 500",
+        }
+        user = {"item_DescSHLD_B": "My custom description"}
+
+        entries = load_source_files(
+            sources_dict={"global": base, "enhancements": enhancement},
+            hierarchy=["global", "enhancements"],
+            user_overrides=user,
+        )
+
+        edited_b = next(e for e in entries if e.key == "item_DescSHLD_B")
+        assert edited_b.status == "Modified"
+        assert edited_b.custom_value == "My custom description"

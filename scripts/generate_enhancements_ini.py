@@ -450,6 +450,11 @@ def _loc_name_key(root: ET.Element) -> str | None:
     return None
 
 
+def _humanize_key(s: str) -> str:
+    """Turn a loc-key or filename stem into a human-readable phrase."""
+    return s.replace("_", " ").strip()
+
+
 def _synthesize_description(root: ET.Element, xml_file: Path, key: str) -> str:
     """Build a synthetic description from XML attributes when base.ini has no entry.
 
@@ -463,7 +468,7 @@ def _synthesize_description(root: ET.Element, xml_file: Path, key: str) -> str:
     if name:
         parts.append(name)
     else:
-        stem = xml_file.stem.replace("_", " ").strip()
+        stem = _humanize_key(xml_file.stem)
         if stem:
             parts.append(stem)
 
@@ -502,7 +507,7 @@ def _synthesize_description(root: ET.Element, xml_file: Path, key: str) -> str:
         if sig:
             parts.append(f"Tracking: {sig}")
 
-    return "\n".join(parts) if parts else key.replace("_", " ")
+    return "\n".join(parts) if parts else _humanize_key(key)
 
 
 # ── Tag emitters ─────────────────────────────────────────────────────────────
@@ -4233,7 +4238,7 @@ def scan_entity_dir(
                 is_discovered_name = name_value is None
                 if is_discovered_name:
                     # Synthesize name from XML file stem
-                    name_value = xml_file.stem.replace("_", " ").strip()
+                    name_value = _humanize_key(xml_file.stem)
                 if name_value:
                     tagger = name_tag_fn or _component_name_tag
                     tag = tagger(base_value, root)
@@ -4628,7 +4633,7 @@ def _run_gen_missions(ctx: dict) -> dict[str, str]:
         base_title = (loc or {}).get(title_key)
         is_discovered_title = not base_title
         if is_discovered_title:
-            base_title = title_key.replace("_", " ").strip()
+            base_title = _humanize_key(title_key)
 
         seen_tiers: list[tuple[int, int]] = []
         # 10-tuple destructure: (system_name, success_xp, failure_xp, desc_key,
@@ -4694,9 +4699,9 @@ def _run_gen_missions(ctx: dict) -> dict[str, str]:
                     (v[9] for v in desc_variants if v[9]), ""
                 )
                 if contract_debug:
-                    base_desc = contract_debug.replace("_", " ").strip()
+                    base_desc = _humanize_key(contract_debug)
                 else:
-                    base_desc = desc_key.replace("_", " ").strip()
+                    base_desc = _humanize_key(desc_key)
             all_flags: list[str] = []
             agg_spawns = _empty_spawn_breakdown()
             all_difficulties: list[str] = []
@@ -4892,7 +4897,7 @@ def _run_gen_missions(ctx: dict) -> dict[str, str]:
     for title_key, xps in pu_title_xps.items():
         base_title = (loc or {}).get(title_key)
         if not base_title:
-            base_title = title_key.replace("_", " ").strip()
+            base_title = _humanize_key(title_key)
         current = out.get(title_key, base_title)
         if xp_tag_re.search(current):
             continue
