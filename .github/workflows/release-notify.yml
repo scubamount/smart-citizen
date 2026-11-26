@@ -49,6 +49,8 @@ jobs:
       - name: Send Discord notification
         # discord_notify.py self-resolves notes from
         # {VERSION}-RELEASE-NOTES.md when not given as argv.
-        run: python scripts/discord_notify.py "${{ github.event.inputs.version }}"
         env:
           DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          # The dispatch input reaches the shell as data, never as shell text.
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
+        run: python scripts/discord_notify.py "$RELEASE_VERSION"
