@@ -43,10 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BRANCH="${{ github.event.pull_request.head.ref }}"
-          REPO="${{ github.repository }}"
           WORKFLOW="installer-preview.yml"
-          PR_NUM="${{ github.event.pull_request.number }}"
 
           echo "Cleanup target: PR #${PR_NUM}, branch '${BRANCH}', workflow ${WORKFLOW}"
 
@@ -54,10 +51,14 @@ jobs:
           # name (works for same-repo PRs; fork PRs would need head.repo
           # disambiguation, but installer-preview's label gate is
           # typically only used on internal PRs anyway).
+          # Filter in the shell, not inside the jq program: a branch name that
+          # contains a quote must stay data, never jq source.
           run_ids=$(gh api --paginate \
             "/repos/${REPO}/actions/workflows/${WORKFLOW}/runs" \
-            --jq ".workflow_runs[] | select(.head_branch == \"${BRANCH}\") | .id" \
-          )
+            --jq '.workflow_runs[] | [.head_branch, .id] | @tsv' \
+            | while IFS=$'\t' read -r head_branch run_id; do
+                if [ "$head_branch" = "$BRANCH" ]; then echo "$run_id"; fi
+              done)
 
           if [ -z "$run_ids" ]; then
             echo "No installer-preview runs found for branch '${BRANCH}' — nothing to clean up."
@@ -87,3 +88,7 @@ jobs:
           echo "Done. Deleted: ${deleted}, skipped: ${skipped} (PR #${PR_NUM} merged from ${BRANCH})."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A fork PR author controls head.ref, so it reaches the shell as data.
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.pull_request.number }}

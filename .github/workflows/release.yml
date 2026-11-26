@@ -59,14 +59,21 @@ jobs:
         # workflow_dispatch use the tag verbatim.
         id: resolve
         shell: pwsh
+        # Untrusted trigger values reach PowerShell as data via $env:, never as
+        # script text, so a tag or branch name cannot run a subexpression.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          $eventName = "${{ github.event_name }}"
-          $refType   = "${{ github.ref_type }}"
+          $eventName = $env:EVENT_NAME
+          $refType   = $env:REF_TYPE
           if ($eventName -eq "workflow_dispatch") {
-            $tag = "${{ github.event.inputs.tag }}"
+            $tag = $env:INPUT_TAG
             $trigger = "dispatch"
           } elseif ($refType -eq "tag") {
-            $tag = "${{ github.ref_name }}"
+            $tag = $env:REF_NAME
             $trigger = "tag"
           } else {
             $version_raw = (Get-Content VERSION.TXT).Trim()
@@ -88,8 +95,8 @@ jobs:
         id: gate
         shell: pwsh
         run: |
-          $trigger = "${{ steps.resolve.outputs.trigger }}"
-          $tag = "${{ steps.resolve.outputs.tag }}"
+          $trigger = $env:TRIGGER
+          $tag = $env:TAG
           if ($trigger -ne "branch") {
             Write-Host "Trigger=$trigger — proceed unconditionally"
             "skip=false" | Out-File -Append $env:GITHUB_OUTPUT
@@ -102,7 +109,7 @@ jobs:
           # and fail the whole step (GitHub Actions runs each pwsh
           # script as a child process and fails the step if it returns
           # non-zero at end of script).
-          $existing = gh release view $tag --repo "${{ github.repository }}" 2>$null
+          $existing = gh release view $tag --repo "$env:GITHUB_REPOSITORY" 2>$null
           $existsCode = $LASTEXITCODE
           if ($existsCode -eq 0) {
             Write-Host "Release $tag already exists — skipping (no version bump in this push)"
@@ -114,12 +121,16 @@ jobs:
           exit 0
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRIGGER: ${{ steps.resolve.outputs.trigger }}
+          TAG: ${{ steps.resolve.outputs.tag }}
 
       - name: Verify VERSION.TXT matches tag
         if: steps.gate.outputs.skip == 'false'
         shell: pwsh
+        env:
+          EXPECTED: ${{ steps.resolve.outputs.version }}
         run: |
-          $expected = "${{ steps.resolve.outputs.version }}"
+          $expected = $env:EXPECTED
           $actual = (Get-Content VERSION.TXT).Trim()
           if ($expected -ne $actual) {
             Write-Error "Tag version ($expected) does not match VERSION.TXT ($actual). Bump VERSION.TXT and re-tag."
@@ -183,8 +194,10 @@ jobs:
         # Move it out, do the portable build, move it back.
         if: steps.gate.outputs.skip == 'false'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          $version = "${{ steps.resolve.outputs.version }}"
+          $version = $env:VERSION
           $installer = "dist/SmartCitizen-${version}-Setup.exe"
           New-Item -ItemType Directory -Path .artifacts-stash -Force | Out-Null
           Move-Item $installer ".artifacts-stash/SmartCitizen-${version}-Setup.exe"
@@ -203,8 +216,10 @@ jobs:
         # sit alongside each other for the verify + publish steps.
         if: steps.gate.outputs.skip == 'false'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          $version = "${{ steps.resolve.outputs.version }}"
+          $version = $env:VERSION
           Move-Item ".artifacts-stash/SmartCitizen-${version}-Setup.exe" "dist/SmartCitizen-${version}-Setup.exe"
           Write-Host "Restored installer to dist/"
 
@@ -212,8 +227,10 @@ jobs:
         if: steps.gate.outputs.skip == 'false'
         id: artifacts
         shell: pwsh
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          $version = "${{ steps.resolve.outputs.version }}"
+          $version = $env:VERSION
           $installer = "dist/SmartCitizen-${version}-Setup.exe"
           $portable  = "dist/SmartCitizen-Portable-v${version}.zip"
           $missing = @()
@@ -233,8 +250,10 @@ jobs:
         if: steps.gate.outputs.skip == 'false'
         id: notes
         shell: pwsh
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          $version = "${{ steps.resolve.outputs.version }}"
+          $version = $env:VERSION
           # Release notes live in docs/ after the 1.4.1 cleanup; older
           # releases keep them at the repo root. Check docs/ first so the
           # next release picks up the new home, then fall back to root so
@@ -267,8 +286,11 @@ jobs:
         # publish the release fine. Pre-check origin and bail out cleanly.
         if: steps.gate.outputs.skip == 'false' && steps.resolve.outputs.trigger == 'branch'
         shell: pwsh
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $tag = "${{ steps.resolve.outputs.tag }}"
+          $tag = $env:TAG
           $exists = git ls-remote --tags origin "refs/tags/$tag"
           if ($exists) {
             Write-Host "Tag $tag already exists on origin — skipping auto-tag step"
@@ -276,7 +298,7 @@ jobs:
           }
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a $tag -m "Release $tag (auto-tagged by release.yml on merge to ${{ github.ref_name }})"
+          git tag -a $tag -m "Release $tag (auto-tagged by release.yml on merge to $env:REF_NAME)"
           git push origin $tag
 
       - name: Publish GitHub Release
@@ -309,9 +331,10 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install python-dotenv --quiet
-          python scripts/discord_notify.py "${{ steps.resolve.outputs.tag }}"
+          python scripts/discord_notify.py "$env:RELEASE_TAG"
         env:
           DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
         # Don't fail the workflow if Discord posting hits a transient
         # webhook error — the release is already published, that's the
         # primary success criterion. A failed Discord post can be
